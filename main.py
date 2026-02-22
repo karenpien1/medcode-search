@@ -25,6 +25,7 @@ PDF_DIR  = BASE_DIR / "pdfs"
 IDX_FILE = BASE_DIR / "index_store" / "index.json"
 PDF_DIR.mkdir(exist_ok=True)
 IDX_FILE.parent.mkdir(exist_ok=True)
+VIDEO_FILE = BASE_DIR / "videos.json"
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
@@ -333,6 +334,76 @@ def delete_document(doc_id):
     (PDF_DIR / deleted[0]["pdf_path"]).unlink(missing_ok=True)
     save_index(remaining)
     return jsonify({"deleted_chunks": len(deleted), "doc_id": doc_id})
+
+
+
+# ── Video helpers ───────────────────────────────────────────────────
+def load_videos():
+    if VIDEO_FILE.exists():
+        return json.loads(VIDEO_FILE.read_text())
+    return []
+
+def save_videos(videos):
+    VIDEO_FILE.write_text(json.dumps(videos, indent=2))
+
+def youtube_embed_url(url):
+    """Convert any YouTube URL to embed URL."""
+    import re
+    # Handle youtu.be/ID and youtube.com/watch?v=ID
+    m = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", url)
+    if m:
+        return f"https://www.youtube.com/embed/{m.group(1)}"
+    return url
+
+def search_videos(query):
+    """Search videos by matching query terms against keywords and title."""
+    videos = load_videos()
+    terms  = query.lower().split()
+    results = []
+    for v in videos:
+        searchable = " ".join(v.get("keywords", [])).lower() + " " + v.get("title", "").lower()
+        score = sum(searchable.count(t) for t in terms)
+        if score > 0:
+            results.append({**v, "score": score, "embed_url": youtube_embed_url(v["youtube_url"])})
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results
+
+# ── Video routes ────────────────────────────────────────────────────
+@app.route("/videos/search")
+def video_search():
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify([])
+    return jsonify(search_videos(q))
+
+@app.route("/videos", methods=["GET"])
+def list_videos():
+    return jsonify(load_videos())
+
+@app.route("/videos", methods=["POST"])
+def add_video():
+    data = request.get_json()
+    if not data or not data.get("youtube_url") or not data.get("title"):
+        return jsonify({"error": "title and youtube_url required"}), 400
+    videos = load_videos()
+    new_video = {
+        "id":          str(uuid.uuid4())[:8],
+        "title":       data["title"],
+        "youtube_url": data["youtube_url"],
+        "keywords":    data.get("keywords", []),
+    }
+    videos.append(new_video)
+    save_videos(videos)
+    return jsonify(new_video)
+
+@app.route("/videos/<video_id>", methods=["DELETE"])
+def delete_video(video_id):
+    videos    = load_videos()
+    remaining = [v for v in videos if v["id"] != video_id]
+    if len(remaining) == len(videos):
+        return jsonify({"error": "Video not found"}), 404
+    save_videos(remaining)
+    return jsonify({"deleted": video_id})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
