@@ -20,15 +20,21 @@ from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from pypdf import PdfReader
 
-BASE_DIR = Path(__file__).parent
-PDF_DIR  = BASE_DIR / "pdfs"
-IDX_FILE = BASE_DIR / "index_store" / "index.json"
+BASE_DIR        = Path(__file__).parent
+PDF_DIR         = BASE_DIR / "pdfs"
+PRELOADED_DIR   = PDF_DIR / "preloaded"
+IDX_FILE        = BASE_DIR / "index_store" / "index.json"
+CONFIG_FILE     = BASE_DIR / "config.json"
 PDF_DIR.mkdir(exist_ok=True)
+PRELOADED_DIR.mkdir(exist_ok=True)
 IDX_FILE.parent.mkdir(exist_ok=True)
 VIDEO_FILE = BASE_DIR / "videos.json"
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
+
+# Preload runs once when the module is imported (works with both gunicorn and direct run)
+# The function is defined later in this file; we defer the call to after all definitions.
 
 # ── Index ───────────────────────────────────────────────────────────
 def load_index():
@@ -258,6 +264,57 @@ def ingest_pdf(pdf_path, doc_id, doc_name):
     save_index(all_chunks)
     return len(new_chunks)
 
+# ── Preload PDFs from config ─────────────────────────────────────────
+def load_config():
+    if CONFIG_FILE.exists():
+        return json.loads(CONFIG_FILE.read_text())
+    return {"preloaded_pdfs": []}
+
+def preload_pdfs_from_config():
+    """
+    Called once at startup.
+    For each entry in config.json → preloaded_pdfs:
+      - looks for the file in pdfs/preloaded/<filename>
+      - skips if already indexed (matched by doc_name)
+      - ingests and adds to index with a stable doc_id derived from the filename
+    """
+    config = load_config()
+    entries = config.get("preloaded_pdfs", [])
+    if not entries:
+        return
+
+    existing = load_index()
+    indexed_names = {c["doc_name"] for c in existing}
+
+    for entry in entries:
+        filename     = entry.get("filename", "")
+        display_name = entry.get("display_name", filename)
+        pdf_path     = PRELOADED_DIR / filename
+
+        if not pdf_path.exists():
+            print(f"[preload] ⚠️  File not found, skipping: {pdf_path}")
+            continue
+
+        if display_name in indexed_names or filename in indexed_names:
+            print(f"[preload] ✅ Already indexed, skipping: {display_name}")
+            continue
+
+        # Use a deterministic doc_id based on filename so re-deploys stay consistent
+        import hashlib
+        doc_id = hashlib.md5(filename.encode()).hexdigest()
+
+        # Copy to main PDF_DIR so /pdfs/<filename> routes work
+        import shutil
+        dest = PDF_DIR / f"{doc_id}.pdf"
+        if not dest.exists():
+            shutil.copy2(str(pdf_path), str(dest))
+
+        try:
+            count = ingest_pdf(dest, doc_id, display_name)
+            print(f"[preload] 📄 Indexed '{display_name}' → {count} pages")
+        except Exception as e:
+            print(f"[preload] ❌ Error indexing '{display_name}': {e}")
+
 # ── Routes ──────────────────────────────────────────────────────────
 @app.route("/")
 def serve_frontend():
@@ -404,6 +461,9 @@ def delete_video(video_id):
         return jsonify({"error": "Video not found"}), 404
     save_videos(remaining)
     return jsonify({"deleted": video_id})
+
+# Run preload once at import time (covers gunicorn workers too)
+preload_pdfs_from_config()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))

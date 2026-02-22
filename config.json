@@ -1,0 +1,19 @@
+{
+  "preloaded_pdfs": [
+    {
+      "filename": "Handboek_icd10be_codering_v1.0_versie_2025-1-300-1-159.pdf",
+      "display_name": "Handboek ICD-10-BE",
+      "description": "Officieel Belgisch handboek voor ICD-10-BE codering- V2025"
+    },
+    {
+      "filename": "ICD_10_CM_CGs_FY2025-Oct_2024.pdf",
+      "display_name": "Internationale CM Richtlijnen_FY2025_Oct2024",
+      "description": "Internationale CM Richtlijnen_FY2025_Oct2024"
+    },
+    {
+      "filename": "ICD_10_PCS_CGs_FY2025-Oct_2024.pdf",
+      "display_name": "Internationale PCS Richtlijnen_FY2025_Oct2024",
+      "description": "Internationale PCS Richtlijnen_FY2025_Oct2024"
+    }
+  ]
+}
